@@ -413,7 +413,7 @@ export class Wallet {
 
     const decryptedNotesByAccountId = new Map<string, Array<DecryptedNote>>()
 
-    const batchSize = 20
+    const batchSize = 200
     for (const account of accountsToCheck) {
       const decryptedNotes = []
       let decryptNotesPayloads = []

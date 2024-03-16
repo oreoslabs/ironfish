@@ -31,6 +31,34 @@ import {
 } from './tasks/verifyTransactions'
 import { WorkerMessage, WorkerMessageType } from './tasks/workerMessage'
 import { getWorkerPath, Worker } from './worker'
+import { v4 as uuid } from 'uuid'
+import { Assert } from '../assert'
+
+type RemoteRespPayload<T> =
+  | {
+      data: T
+      error: undefined
+      code: number
+    }
+  | {
+      data: undefined
+      error: string
+      code: number
+    }
+
+interface OreoDecryptedNote {
+  index: number | null
+  forSpender: boolean
+  hash: string
+  nullifier: string | null
+  serializedNote: string
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const remoteBaseUrl = ''
 
 /**
  * Manages the creation of worker threads and distribution of jobs to them.
@@ -192,6 +220,24 @@ export class WorkerPool {
   }
 
   async decryptNotes(payloads: DecryptNoteOptions[]): Promise<Array<DecryptedNote | null>> {
+    try {
+      const result = await this.executeRemote(payloads)
+      if (result.code === 606) {
+        Assert.isNotUndefined(result.data)
+        const data = result.data.data
+        const decrypted = data.map((x) => {
+          return {
+            ...x,
+            hash: Buffer.from(x.hash, 'hex'),
+            nullifier: x.nullifier ? Buffer.from(x.nullifier, 'hex') : null,
+            serializedNote: Buffer.from(x.serializedNote),
+          }
+        })
+        return decrypted
+      }
+    } catch (e) {
+      // no matter what happens, we have to decrypt locally
+    }
     const request = new DecryptNotesRequest(payloads)
 
     const response = await this.execute(request).result()
@@ -200,6 +246,70 @@ export class WorkerPool {
     }
 
     return response.notes
+  }
+
+  async executeRemote(
+    request: DecryptNoteOptions[],
+  ): Promise<RemoteRespPayload<{ id: string; data: Array<OreoDecryptedNote> }>> {
+    const jobId = uuid()
+    const dData = request.map((x) => {
+      return {
+        ...x,
+        serializedNote: x.serializedNote.toString('hex'),
+      }
+    })
+    await fetch(`${remoteBaseUrl}/submitTask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: jobId,
+        data: dData,
+      }),
+    })
+    let retry = 3
+    let maxRetry = 10
+    while (maxRetry > 0) {
+      const result = await fetch(`${remoteBaseUrl}/getResult`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: jobId,
+        }),
+      })
+      const decryptResult: RemoteRespPayload<{
+        id: string
+        data: Array<OreoDecryptedNote>
+      }> = await result.json()
+      if (decryptResult.code === 606) {
+        return decryptResult
+      } else if (decryptResult.code === 604) {
+        if (retry <= 0) {
+          return decryptResult
+        }
+        await fetch(`${remoteBaseUrl}/submitTask`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: jobId,
+            data: dData,
+          }),
+        })
+        retry -= 1
+      } else if (decryptResult.code === 605) {
+        // sleep 3 seconds and try again
+        await sleep(3 * 1000)
+      } else {
+        // should never happen
+      }
+      maxRetry -= 1
+    }
+    return { data: undefined, error: 'too long to get decrypted response', code: 607 }
   }
 
   /**
