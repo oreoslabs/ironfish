@@ -117,6 +117,11 @@ export default class Start extends IronfishCommand {
       default: true,
       description: `Enable the node's wallet to scan transactions and decrypt notes from the blockchain`,
     }),
+    noScanning: Flags.boolean({
+      default: false,
+      description: 'Disable scanning block transactions for all accounts',
+      hidden: true,
+    }),
   }
 
   node: FullNode | null = null
@@ -148,6 +153,7 @@ export default class Start extends IronfishCommand {
       networkId,
       customNetwork,
       wallet,
+      noScanning,
     } = flags
 
     if (bootstrap !== undefined) {
@@ -201,6 +207,9 @@ export default class Start extends IronfishCommand {
         'Cannot specify both the networkId and customNetwork flags at the same time',
       )
     }
+
+    // overwrite latest noScanning to config
+    this.sdk.config.setOverride('noScanning', noScanning)
 
     if (!this.sdk.internal.get('telemetryNodeId')) {
       this.sdk.internal.set('telemetryNodeId', uuid())

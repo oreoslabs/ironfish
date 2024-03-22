@@ -474,6 +474,10 @@ export class Wallet {
     transactions: WalletBlockTransaction[],
     scan?: ScanState,
   ): Promise<void> {
+    if (this.config.get('noScanning')) {
+      return
+    }
+
     const accounts = await AsyncUtils.filter(this.listAccounts(), async (account) => {
       const accountHead = await account.getHead()
 
@@ -524,6 +528,46 @@ export class Wallet {
         }
       })
     }
+  }
+
+  async importBlockTransaction(
+    account: Account,
+    blockHeader: WalletBlockHeader,
+    transactions: WalletBlockTransaction[],
+  ): Promise<boolean> {
+    const shouldDecrypt = await this.shouldDecryptForAccount(blockHeader, account)
+
+    await this.walletDb.db.transaction(async (tx) => {
+      let assetBalanceDeltas = new AssetBalances()
+
+      if (shouldDecrypt) {
+        assetBalanceDeltas = await this.connectBlockTransactions(
+          blockHeader,
+          transactions,
+          account,
+          undefined,
+          tx,
+        )
+      }
+
+      await account.updateUnconfirmedBalances(
+        assetBalanceDeltas,
+        blockHeader.hash,
+        blockHeader.sequence,
+        tx,
+      )
+
+      await account.updateHead({ hash: blockHeader.hash, sequence: blockHeader.sequence }, tx)
+
+      const accountHasTransaction = assetBalanceDeltas.size > 0
+      if (account.createdAt === null && accountHasTransaction) {
+        await account.updateCreatedAt(
+          { hash: blockHeader.hash, sequence: blockHeader.sequence },
+          tx,
+        )
+      }
+    })
+    return true
   }
 
   async shouldDecryptForAccount(

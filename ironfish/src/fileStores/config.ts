@@ -303,6 +303,10 @@ export type ConfigOptions = {
    * network users will not need this speed increase and so should keep the default of `false`.
    */
   fishHashFullContext: boolean
+  /**
+   * Whether or not to disable scanning new transactions for accounts
+   */
+  noScanning: boolean
 }
 
 export const ConfigOptionsSchema: yup.ObjectSchema<Partial<ConfigOptions>> = yup
@@ -384,6 +388,7 @@ export const ConfigOptionsSchema: yup.ObjectSchema<Partial<ConfigOptions>> = yup
     walletGossipTransactionsMaxQueueSize: yup.number(),
     walletSyncingMaxQueueSize: yup.number(),
     fishHashFullContext: yup.boolean(),
+    noScanning: yup.boolean(),
   })
   .defined()
 
@@ -493,6 +498,7 @@ export class Config<
       walletGossipTransactionsMaxQueueSize: 1000,
       walletSyncingMaxQueueSize: 100,
       fishHashFullContext: false,
+      noScanning: false,
     }
   }
 }
