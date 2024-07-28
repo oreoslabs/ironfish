@@ -29,7 +29,7 @@ export type CreateTransactionRequest = {
     assetId?: string
   }[]
   mints?: {
-    assetId?: string
+    assetId?: string | null
     name?: string
     metadata?: string
     value: string
@@ -74,7 +74,7 @@ export const CreateTransactionRequestSchema: yup.ObjectSchema<CreateTransactionR
       .array(
         yup
           .object({
-            assetId: yup.string().optional(),
+            assetId: yup.string().nullable().optional(),
             name: yup.string().optional().max(ASSET_NAME_LENGTH),
             metadata: yup.string().optional().max(ASSET_METADATA_LENGTH),
             value: YupUtils.currency({ min: 0n }).defined(),
