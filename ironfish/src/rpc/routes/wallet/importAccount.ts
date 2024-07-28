@@ -4,20 +4,48 @@
 import * as yup from 'yup'
 import { DecodeInvalidName } from '../../../wallet'
 import { DuplicateAccountNameError } from '../../../wallet/errors'
-import { decodeAccountImport } from '../../../wallet/exporter/account'
-import { decryptEncodedAccount } from '../../../wallet/exporter/encryption'
 import { RPC_ERROR_CODES, RpcValidationError } from '../../adapters'
 import { ApiNamespace } from '../namespaces'
 import { routes } from '../router'
 import { AssertHasRpcContext } from '../rpcContext'
+import { RpcMultisigKeys } from './types'
+import { AccountImport } from '../../../wallet/exporter'
+import { deserializeRpcAccountMultisigKeys } from './serializers'
 
 export class ImportError extends Error {}
 
+type RpcAccountImport = {
+  version: number
+  name: string
+  viewKey: string
+  incomingViewKey: string
+  outgoingViewKey: string
+  publicAddress: string
+  spendingKey: string | null
+  createdAt: { hash: string; sequence: number } | null
+  multisigKeys?: RpcMultisigKeys
+  proofAuthorizingKey: string | null
+}
+
+function deserializeRpcAccountImport(accountImport: RpcAccountImport): AccountImport {
+  return {
+    ...accountImport,
+    createdAt: accountImport.createdAt
+      ? {
+          hash: Buffer.from(accountImport.createdAt.hash, 'hex'),
+          sequence: accountImport.createdAt.sequence,
+        }
+      : null,
+    multisigKeys: accountImport.multisigKeys
+      ? deserializeRpcAccountMultisigKeys(accountImport.multisigKeys)
+      : undefined,
+  }
+}
+
 export type ImportAccountRequest = {
-  account: string
+  account: RpcAccountImport | string
   name?: string
   rescan?: boolean
-  createdAt?: number
 }
 
 export type ImportResponse = {
@@ -29,8 +57,7 @@ export const ImportAccountRequestSchema: yup.ObjectSchema<ImportAccountRequest> 
   .object({
     rescan: yup.boolean().optional().default(true),
     name: yup.string().optional(),
-    account: yup.string().defined(),
-    createdAt: yup.number().optional(),
+    account: yup.mixed<RpcAccountImport | string>().defined(),
   })
   .defined()
 
@@ -46,29 +73,23 @@ routes.register<typeof ImportAccountRequestSchema, ImportResponse>(
   ImportAccountRequestSchema,
   async (request, context): Promise<void> => {
     try {
+      let accountImport = null
       AssertHasRpcContext(request, context, 'wallet')
+      if (typeof request.data.account === 'string') {
+        // should never happen
+        throw new RpcValidationError('unimplemented', 400, RPC_ERROR_CODES.VALIDATION)
+      } else {
+        accountImport = deserializeRpcAccountImport(request.data.account)
+        const account = await context.wallet.importAccount(accountImport, {
+          createdAt: request.data.account.createdAt?.sequence,
+        })
+        const isDefaultAccount = context.wallet.getDefaultAccount()?.id === account.id
 
-      request.data.account = await decryptEncodedAccount(request.data.account, context.wallet)
-
-      const decoded = decodeAccountImport(request.data.account, { name: request.data.name })
-      const account = await context.wallet.importAccount(decoded, {
-        createdAt: request.data.createdAt,
-      })
-
-      if (!context.wallet.hasDefaultAccount) {
-        await context.wallet.setDefaultAccount(account.name)
+        request.end({
+          name: account.name,
+          isDefaultAccount,
+        })
       }
-
-      if (!request.data.rescan) {
-        await context.wallet.skipRescan(account)
-      }
-
-      const isDefaultAccount = context.wallet.getDefaultAccount()?.id === account.id
-
-      request.end({
-        name: account.name,
-        isDefaultAccount,
-      })
     } catch (e) {
       if (e instanceof DuplicateAccountNameError) {
         throw new RpcValidationError(e.message, 400, RPC_ERROR_CODES.DUPLICATE_ACCOUNT_NAME)

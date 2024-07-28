@@ -44,10 +44,16 @@ export const GetAccountTransactionsRequestSchema: yup.ObjectSchema<GetAccountTra
     })
     .defined()
 
-export type GetAccountTransactionsResponse = RpcWalletTransaction
+export type GetAccountTransactionsResponse = {
+  transactions: RpcWalletTransaction[]
+}
 
 export const GetAccountTransactionsResponseSchema: yup.ObjectSchema<GetAccountTransactionsResponse> =
-  RpcWalletTransactionSchema.defined()
+  yup
+    .object({
+      transactions: yup.array(RpcWalletTransactionSchema.defined()).defined(),
+    })
+    .defined()
 
 routes.register<typeof GetAccountTransactionsRequestSchema, GetAccountTransactionsResponse>(
   `${ApiNamespace.wallet}/getAccountTransactions`,
@@ -64,27 +70,9 @@ routes.register<typeof GetAccountTransactionsRequestSchema, GetAccountTransactio
       confirmations: request.data.confirmations ?? node.config.get('confirmations'),
     }
 
-    if (request.data.hash) {
-      const hashBuffer = Buffer.from(request.data.hash, 'hex')
-
-      const transaction = await account.getTransaction(hashBuffer)
-
-      if (transaction) {
-        await streamTransaction(
-          request,
-          node.config,
-          node.wallet,
-          account,
-          transaction,
-          options,
-        )
-      }
-      request.end()
-      return
-    }
-
     let count = 0
     let offset = 0
+    const allTxs = []
 
     const transactions = request.data.sequence
       ? account.getTransactionsBySequence(request.data.sequence)
@@ -104,15 +92,23 @@ routes.register<typeof GetAccountTransactionsRequestSchema, GetAccountTransactio
         break
       }
 
-      await streamTransaction(request, node.config, node.wallet, account, transaction, options)
+      const tx = await handleTransaction(
+        request,
+        node.config,
+        node.wallet,
+        account,
+        transaction,
+        options,
+      )
+      allTxs.push(tx)
       count++
     }
 
-    request.end()
+    request.end({ transactions: allTxs })
   },
 )
 
-const streamTransaction = async (
+const handleTransaction = async (
   request: RpcRequest<GetAccountTransactionsRequest, GetAccountTransactionsResponse>,
   config: Config,
   wallet: Wallet,
@@ -122,7 +118,7 @@ const streamTransaction = async (
     headSequence: number | null
     confirmations: number
   },
-): Promise<void> => {
+): Promise<RpcWalletTransaction> => {
   const serializedTransaction = await serializeRpcWalletTransaction(
     config,
     wallet,
@@ -154,5 +150,5 @@ const streamTransaction = async (
     spends,
   }
 
-  request.stream(serialized)
+  return serialized
 }
